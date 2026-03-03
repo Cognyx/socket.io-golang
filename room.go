@@ -1,6 +1,7 @@
 package socketio
 
 import (
+	"errors"
 	"sync"
 )
 
@@ -21,16 +22,21 @@ func newRoom(name string) *Room {
 }
 
 func (room *Room) Emit(event string, agrs ...interface{}) error {
+	var errs []error
 	if len(room.connectSockets) > 0 {
 		for _, socket := range room.connectSockets {
-			socket.Emit(event, agrs...)
+			if err := socket.Emit(event, agrs...); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	} else {
 		for _, socket := range room.sockets.all() {
-			socket.Emit(event, agrs...)
+			if err := socket.Emit(event, agrs...); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (room *Room) Sockets() []*Socket {
