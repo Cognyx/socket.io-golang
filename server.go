@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/doquangtan/gofiber-socket.io/engineio"
-	"github.com/doquangtan/gofiber-socket.io/socket_protocol"
+	"cognyx.io/socket.io-golang/engineio"
+	"cognyx.io/socket.io-golang/socket_protocol"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/websocket/v2"
 	"github.com/google/uuid"

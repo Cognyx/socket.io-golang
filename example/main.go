@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	socketio "github.com/doquangtan/gofiber-socket.io"
+	socketio "cognyx.io/socket.io-golang"
 	"github.com/gofiber/fiber/v2"
 )
 
