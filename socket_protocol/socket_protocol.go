@@ -5,7 +5,7 @@ import (
 	"io"
 	"strconv"
 
-	"github.com/doquangtan/socketio/v4/engineio"
+	"cognyx.io/socket.io-golang/engineio"
 )
 
 type PacketType int
