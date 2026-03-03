@@ -1,4 +1,4 @@
-module github.com/doquangtan/socketio/v4
+module cognyx.io/socket.io-golang
 
 go 1.22.2
 
