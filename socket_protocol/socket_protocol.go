@@ -5,7 +5,7 @@ import (
 	"io"
 	"strconv"
 
-	"cognyx.io/socket.io-golang/engineio"
+	"github.com/Cognyx/socket.io-golang/engineio"
 )
 
 type PacketType int

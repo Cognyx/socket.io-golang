@@ -14,13 +14,13 @@
 Install the package with:
 
 ```bash
-go get cognyx.io/socket.io-golang
+go get github.com/Cognyx/socket.io-golang
 ```
 
 Import it with:
 
 ```go
-import "cognyx.io/socket.io-golang"
+import "github.com/Cognyx/socket.io-golang"
 ```
 
 and use `socketio` as the package name inside the code.
@@ -31,7 +31,7 @@ and use `socketio` as the package name inside the code.
 #### socketio.New
 ```go
 import (
-	socketio "cognyx.io/socket.io-golang"
+	socketio "github.com/Cognyx/socket.io-golang"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -209,4 +209,4 @@ socket.On("room 237", func(event *socketio.EventPayload) {
 
 # Example
 
-Please check more examples into folder in project for details. [Examples](https://cognyx.io/socket.io-golang/tree/main/example)
+Please check more examples into folder in project for details. [Examples](https://github.com/Cognyx/socket.io-golang/tree/main/example)
