@@ -1,4 +1,4 @@
-module cognyx.io/socket.io-golang
+module github.com/Cognyx/socket.io-golang
 
 go 1.22.2
 

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"time"
 
-	"cognyx.io/socket.io-golang/engineio"
-	"cognyx.io/socket.io-golang/socket_protocol"
+	"github.com/Cognyx/socket.io-golang/engineio"
+	"github.com/Cognyx/socket.io-golang/socket_protocol"
 	"github.com/gofiber/websocket/v2"
 )
 
