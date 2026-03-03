@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/doquangtan/socketio/v4/client"
-	"github.com/doquangtan/socketio/v4/engineio"
-	"github.com/doquangtan/socketio/v4/socket_protocol"
+	"cognyx.io/socket.io-golang/client"
+	"cognyx.io/socket.io-golang/engineio"
+	"cognyx.io/socket.io-golang/socket_protocol"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
 	"github.com/gofiber/websocket/v2"
