@@ -100,11 +100,12 @@ func (s *Socket) writer(t socket_protocol.PacketType, arg ...interface{}) error 
 	if s.Nps != "/" {
 		nps = s.Nps + ","
 	}
+	var writeErr error
 	if t == socket_protocol.ACK {
 		agrs := append([]interface{}{}, arg[0].([]interface{})[1:])
-		socket_protocol.WriteToWithAck(w, t, nps, arg[0].([]interface{})[0].(string), agrs...)
+		_, writeErr = socket_protocol.WriteToWithAck(w, t, nps, arg[0].([]interface{})[0].(string), agrs...)
 	} else {
-		socket_protocol.WriteTo(w, t, nps, arg...)
+		_, writeErr = socket_protocol.WriteTo(w, t, nps, arg...)
 	}
-	return w.Close()
+	return errors.Join(writeErr, w.Close())
 }
