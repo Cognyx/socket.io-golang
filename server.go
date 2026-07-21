@@ -319,6 +319,7 @@ func (s *Io) new() func(ctx *fiber.Ctx) error {
 								})
 								continue
 							}
+							socket_nps.AuthParams = dataJson
 						}
 
 						socket.dispose = append(socket.dispose, func() {
