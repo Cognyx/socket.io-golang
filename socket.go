@@ -10,16 +10,17 @@ import (
 )
 
 type Socket struct {
-	Id        string
-	Nps       string
-	Conn      *websocket.Conn
-	rooms     roomNames
-	listeners listeners
-	pingTime  time.Duration
-	dispose   []func()
-	Join      func(room string)
-	Leave     func(room string)
-	To        func(room string) *Room
+	Id         string
+	Nps        string
+	Conn       *websocket.Conn
+	rooms      roomNames
+	listeners  listeners
+	pingTime   time.Duration
+	dispose    []func()
+	Join       func(room string)
+	Leave      func(room string)
+	To         func(room string) *Room
+	AuthParams map[string]string
 }
 
 func (s *Socket) On(event string, fn eventCallback) {
