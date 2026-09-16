@@ -112,7 +112,7 @@ func (s *Io) read(ctx context.Context) {
 	for {
 		select {
 		case payLoad := <-s.readChan:
-			if payLoad.socket.Conn == nil {
+			if payLoad.socket.conn() == nil {
 				continue
 			}
 			dataJson := []interface{}{}
@@ -358,7 +358,7 @@ func (s *Io) new() func(ctx *fiber.Ctx) error {
 						if err != nil {
 							return
 						}
-						if socket.Conn != nil {
+						if socket.conn() != nil {
 							s.readChan <- payload{
 								socket: socket_nps,
 								data:   rawpayload,

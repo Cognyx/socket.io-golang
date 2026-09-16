@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -313,5 +314,95 @@ func TestRoomEmitSkipsDisconnectedSocket(t *testing.T) {
 	err := nps.To("room").Emit("event", "arg")
 	if err == nil || !strings.Contains(err.Error(), "socket has disconnected") {
 		t.Fatalf("Room.Emit on a disconnected member returned %v; want \"socket has disconnected\"", err)
+	}
+}
+
+// TestSocketEmitOverlapsDisconnectRaceFree is the falsifying probe for the
+// unsynchronised fast-path read that survived the first TEC-6264 fix: at
+// v0.1.15 Emit and ack read s.Conn BEFORE taking writeMu while disconnect
+// publishes s.Conn = nil UNDER it. TestSocketEmitDuringDisconnectDoesNotPanic
+// sequences that read before disconnect starts, so it cannot see the race.
+// Here writers hammer Emit and ack with no ordering at all while disconnect
+// runs in the middle of the storm; under -race the pre-fix code reports
+// "Read at socket.go:49 … Previous write at socket.go:111". Post-fix every
+// read of Conn is under writeMu and the only acceptable outcomes are a nil
+// error (frame written before the disconnect) or "socket has disconnected".
+func TestSocketEmitOverlapsDisconnectRaceFree(t *testing.T) {
+	t.Parallel()
+
+	socket, cleanup := setupLoopbackSocket(t)
+	defer cleanup()
+
+	const writers = 8
+	var (
+		wg        sync.WaitGroup
+		stop      atomic.Bool
+		panics    = make(chan any, writers+1)
+		badErrors = make(chan error, writers)
+	)
+
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					panics <- r
+				}
+			}()
+			for !stop.Load() {
+				var err error
+				if i%2 == 0 {
+					err = socket.Emit("event", i)
+				} else {
+					err = socket.ack("ack", i)
+				}
+				if err != nil && !strings.Contains(err.Error(), "socket has disconnected") {
+					badErrors <- err
+					return
+				}
+			}
+		}(i)
+	}
+
+	// Let the writers get going, then tear the connection down under them.
+	time.Sleep(20 * time.Millisecond)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				panics <- r
+			}
+		}()
+		socket.disconnect()
+	}()
+	// Keep the writers overlapping the disconnect for a while, then stop.
+	time.Sleep(50 * time.Millisecond)
+	stop.Store(true)
+
+	joined := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(joined)
+	}()
+	select {
+	case <-joined:
+	case <-time.After(3 * time.Second):
+		t.Fatal("writers / disconnect did not finish")
+	}
+	close(panics)
+	for r := range panics {
+		t.Fatalf("panic while Emit/ack overlapped disconnect: %v", r)
+	}
+	close(badErrors)
+	for err := range badErrors {
+		t.Fatalf("writer returned %v; want nil or \"socket has disconnected\"", err)
+	}
+	socket.writeMu.Lock()
+	c := socket.Conn
+	socket.writeMu.Unlock()
+	if c != nil {
+		t.Fatal("disconnect did not publish a nil Conn")
 	}
 }
