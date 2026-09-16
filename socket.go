@@ -22,6 +22,11 @@ type Socket struct {
 	// goroutine. Held across the full write — NextWriter, WriteTo/WriteByte,
 	// and w.Close — because the underlying writer stays exclusive until
 	// Close returns. See TEC-5706 / TEC-5723.
+	//
+	// writeMu also guards the Conn pointer itself: every write path snapshots
+	// Conn under the lock, and disconnect publishes the nil under it, so a
+	// writer never re-reads a field a concurrent disconnect is tearing down.
+	// Re-reading s.Conn after the lock was the nil dereference of TEC-6264.
 	writeMu    sync.Mutex
 	Id         string
 	Nps        string
@@ -59,12 +64,12 @@ func (s *Socket) ack(ackEvent string, agrs ...interface{}) error {
 }
 
 func (s *Socket) Ping() error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	c := s.Conn
 	if c == nil || c.Conn == nil {
 		return errors.New("socket has disconnected")
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
 	w, err := c.Conn.NextWriter(websocket.TextMessage)
 	if err != nil {
 		c.Close()
@@ -79,8 +84,10 @@ func (s *Socket) Disconnect() error {
 	if c == nil || c.Conn == nil {
 		return errors.New("socket has disconnected")
 	}
+	// writer returns the benign "socket has disconnected" if disconnect wins
+	// the race; the read deadline still unblocks the read loop either way.
 	s.writer(socket_protocol.DISCONNECT)
-	return s.Conn.SetReadDeadline(time.Now())
+	return c.SetReadDeadline(time.Now())
 }
 
 func (s *Socket) Rooms() []string {
@@ -88,8 +95,18 @@ func (s *Socket) Rooms() []string {
 }
 
 func (s *Socket) disconnect() {
-	s.Conn.Close()
+	// Publish the nil under writeMu: a writer that already snapshotted Conn
+	// finished its frame before we got the lock, and any later one sees the
+	// nil and returns "socket has disconnected". Close and the dispose
+	// callbacks run outside the lock — an application "disconnect" listener
+	// may Emit, which takes writeMu again.
+	s.writeMu.Lock()
+	c := s.Conn
 	s.Conn = nil
+	s.writeMu.Unlock()
+	if c != nil {
+		c.Close()
+	}
 	// s.rooms = []string{}
 	if len(s.dispose) > 0 {
 		for _, dispose := range s.dispose {
@@ -101,7 +118,11 @@ func (s *Socket) disconnect() {
 func (s *Socket) engineWrite(t engineio.PacketType, arg ...interface{}) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	w, err := s.Conn.Conn.NextWriter(websocket.TextMessage)
+	c := s.Conn
+	if c == nil || c.Conn == nil {
+		return errors.New("socket has disconnected")
+	}
+	w, err := c.Conn.NextWriter(websocket.TextMessage)
 	if err != nil {
 		return err
 	}
@@ -112,7 +133,11 @@ func (s *Socket) engineWrite(t engineio.PacketType, arg ...interface{}) error {
 func (s *Socket) writer(t socket_protocol.PacketType, arg ...interface{}) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	w, err := s.Conn.Conn.NextWriter(websocket.TextMessage)
+	c := s.Conn
+	if c == nil || c.Conn == nil {
+		return errors.New("socket has disconnected")
+	}
+	w, err := c.Conn.NextWriter(websocket.TextMessage)
 	if err != nil {
 		return err
 	}

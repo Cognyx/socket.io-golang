@@ -3,6 +3,7 @@ package socketio
 import (
 	"context"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -216,3 +217,101 @@ func TestSocketWriteMuBlocksConcurrentWriter(t *testing.T) {
 	}
 }
 
+// TestSocketEmitDuringDisconnectDoesNotPanic reproduces TEC-6264. Emit passes
+// its nil check on s.Conn, then parks in writer on a writeMu that another
+// goroutine holds (the 1s heartbeat, or a slow frame, in production). Meanwhile
+// the read loop's deferred disconnect nils s.Conn. Before the fix, writer
+// re-read the field once the lock was released and dereferenced nil at
+// s.Conn.Conn — an unrecovered panic on a broadcast goroutine that took the API
+// process down 14 times in seven days on treves-prod. With the fix, writer
+// snapshots Conn under writeMu and disconnect publishes the nil under the same
+// lock, so Emit either completes its frame or returns the benign
+// "socket has disconnected" that the application already tolerates.
+func TestSocketEmitDuringDisconnectDoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	socket, cleanup := setupLoopbackSocket(t)
+	defer cleanup()
+
+	// A: hold writeMu, as the heartbeat would mid-frame.
+	socket.writeMu.Lock()
+
+	// Panics happen on the offending goroutine; recover per-goroutine and
+	// report via a channel so the test can t.Fatal cleanly.
+	panicCh := make(chan any, 2)
+	emitErr := make(chan error, 1)
+	var wg sync.WaitGroup
+
+	// B: Emit sees a non-nil Conn, then blocks in writer on the held lock.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				panicCh <- r
+			}
+		}()
+		emitErr <- socket.Emit("event", "arg")
+	}()
+	// Give B a fair chance to reach the lock before the disconnect runs, as
+	// TestSocketWriteMuBlocksConcurrentWriter does.
+	time.Sleep(50 * time.Millisecond)
+
+	// C: the read loop's deferred disconnect, racing the parked writer.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				panicCh <- r
+			}
+		}()
+		socket.disconnect()
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	// A releases. Pre-fix, B now dereferences the field that C nil'd.
+	socket.writeMu.Unlock()
+
+	joined := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(joined)
+	}()
+	select {
+	case <-joined:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Emit / disconnect did not complete after writeMu was released")
+	}
+	close(panicCh)
+	for r := range panicCh {
+		t.Fatalf("panic while disconnect raced an Emit parked on writeMu (writer re-reads s.Conn?): %v", r)
+	}
+
+	if err := <-emitErr; err != nil && !strings.Contains(err.Error(), "socket has disconnected") {
+		t.Fatalf("Emit returned %v; want nil or \"socket has disconnected\"", err)
+	}
+}
+
+// TestRoomEmitSkipsDisconnectedSocket pins the contract the application relies
+// on: a socket whose Conn is nil but which is still a room member — permanently
+// here, since this synthetic namespace wires no dispose callback; transiently
+// in production, between disconnect nil-ing Conn and the dispose room-leave —
+// makes Room.Emit return an error containing "socket has disconnected", the
+// substring SocketIOAdapter.EmitToRoom matches to classify a benign
+// disconnect, rather than panicking.
+func TestRoomEmitSkipsDisconnectedSocket(t *testing.T) {
+	t.Parallel()
+
+	socket, cleanup := setupLoopbackSocket(t)
+	defer cleanup()
+
+	nps := newNamespace("/")
+	nps.socketJoinRoom("room", socket)
+	socket.disconnect()
+
+	err := nps.To("room").Emit("event", "arg")
+	if err == nil || !strings.Contains(err.Error(), "socket has disconnected") {
+		t.Fatalf("Room.Emit on a disconnected member returned %v; want \"socket has disconnected\"", err)
+	}
+}
