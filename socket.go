@@ -27,6 +27,8 @@ type Socket struct {
 	// Conn under the lock, and disconnect publishes the nil under it, so a
 	// writer never re-reads a field a concurrent disconnect is tearing down.
 	// Re-reading s.Conn after the lock was the nil dereference of TEC-6264.
+	// Reads of Conn outside the write paths go through conn(), so no goroutine
+	// ever touches the field unsynchronised against that nil-publish.
 	writeMu    sync.Mutex
 	Id         string
 	Nps        string
@@ -45,22 +47,29 @@ func (s *Socket) On(event string, fn eventCallback) {
 	s.listeners.set(event, fn)
 }
 
+// Emit writes an EVENT frame. There is deliberately no pre-lock look at
+// s.Conn here: writer snapshots it under writeMu and returns the benign
+// "socket has disconnected" when a concurrent disconnect already nil'd it. A
+// fast-path read before the lock would race disconnect's locked write
+// (TEC-6264 follow-up, -race probe on socket.go:49/111 at v0.1.15).
 func (s *Socket) Emit(event string, agrs ...interface{}) error {
-	c := s.Conn
-	if c == nil || c.Conn == nil {
-		return errors.New("socket has disconnected")
-	}
 	agrs = append([]interface{}{event}, agrs...)
 	return s.writer(socket_protocol.EVENT, agrs)
 }
 
+// ack writes an ACK frame; same locking contract as Emit.
 func (s *Socket) ack(ackEvent string, agrs ...interface{}) error {
-	c := s.Conn
-	if c == nil || c.Conn == nil {
-		return errors.New("socket has disconnected")
-	}
 	agrs = append([]interface{}{ackEvent}, agrs...)
 	return s.writer(socket_protocol.ACK, agrs)
+}
+
+// conn returns the current Conn pointer, read under writeMu. Every read of
+// s.Conn outside the write paths (which take the lock themselves) goes
+// through here so it is ordered against disconnect's locked nil-publish.
+func (s *Socket) conn() *websocket.Conn {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.Conn
 }
 
 func (s *Socket) Ping() error {
@@ -87,9 +96,7 @@ func (s *Socket) Disconnect() error {
 	// pre-write snapshot: the *websocket.Conn is sync.Pool-backed (gofiber
 	// releaseConn), so a snapshot taken before the write can already belong to
 	// an unrelated connection once this one's read loop has returned.
-	s.writeMu.Lock()
-	c := s.Conn
-	s.writeMu.Unlock()
+	c := s.conn()
 	if c == nil || c.Conn == nil {
 		return errors.New("socket has disconnected")
 	}
