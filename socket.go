@@ -80,13 +80,19 @@ func (s *Socket) Ping() error {
 }
 
 func (s *Socket) Disconnect() error {
-	c := s.Conn
-	if c == nil || c.Conn == nil {
-		return errors.New("socket has disconnected")
-	}
 	// writer returns the benign "socket has disconnected" if disconnect wins
 	// the race; the read deadline still unblocks the read loop either way.
 	s.writer(socket_protocol.DISCONNECT)
+	// Re-read Conn under writeMu after the network write instead of reusing a
+	// pre-write snapshot: the *websocket.Conn is sync.Pool-backed (gofiber
+	// releaseConn), so a snapshot taken before the write can already belong to
+	// an unrelated connection once this one's read loop has returned.
+	s.writeMu.Lock()
+	c := s.Conn
+	s.writeMu.Unlock()
+	if c == nil || c.Conn == nil {
+		return errors.New("socket has disconnected")
+	}
 	return c.SetReadDeadline(time.Now())
 }
 
